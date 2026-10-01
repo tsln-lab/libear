@@ -29,6 +29,8 @@ add_library(ear
   object_based/polar_extent.cpp
   object_based/polar_extent_scalar.cpp
   object_based/polar_extent_simd.cpp
+  object_based/channel_lock.cpp
+  object_based/divergence.cpp
   object_based/gain_calculator_objects.cpp
   warnings.cpp
   ${CMAKE_CURRENT_BINARY_DIR}/hoa_points_file.cpp

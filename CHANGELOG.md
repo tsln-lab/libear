@@ -2,6 +2,12 @@
 
 ## unreleased changes
 
+### Added
+
+- `channelLock` and `objectDivergence` (polar) support in `GainCalculatorObjects`, ported from the reference implementation.
+- Warning codes `DIVERGENCE_POSITIONRANGE_IGNORED` and `DIVERGENCE_AZIMUTHRANGE_IGNORED` for mismatched divergence types.
+- `objects_reference_tests`: comparison of `GainCalculatorObjects` against gains generated from the reference implementation (`tools/reference/generate_objects_reference.py`).
+
 ### Changed
 
 - `Layout::screen` defaults to `getDefaultScreen()` to match the EAR. Call `layout.screen(boost::none)` to get the old behaviour.

@@ -26,9 +26,7 @@ parameters/features are currently not implemented:
 Objects:
 
 -  Cartesian positions, or ``cartesian == true``
--  ``divergence``
 -  ``zoneExclusion``
--  ``channelLock``
 -  ``screenRef``
 -  ``screenEdgeLock``
 
@@ -43,6 +41,12 @@ All types:
 
 *libear* aims to be a complete renderer implementation; these deficiencies will
 be addressed in future releases.
+
+The Objects gain calculator is checked against gains produced by the reference
+implementation (the `EBU ADM Renderer <https://github.com/ebu/ebu_adm_renderer>`_)
+over a large set of layouts and block formats; see
+``tools/reference/generate_objects_reference.py`` and
+``tests/objects_reference_tests.cpp``.
 
 *libear* does not include functionality to read BW64 files or parse ADM XML
 data; for that functionality we recommend using libbw64_ and libadm_.

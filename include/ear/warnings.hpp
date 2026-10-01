@@ -22,6 +22,13 @@ namespace ear {
       HOA_SCREENREF_NOT_IMPLEMENTED,
       /// nfcRefDist is not implemented; ignoring
       HOA_NFCREFDIST_NOT_IMPLEMENTED,
+
+      /// Cartesian objectDivergence (positionRange) given for a polar block
+      /// format; using polar divergence with the default azimuthRange
+      DIVERGENCE_POSITIONRANGE_IGNORED,
+      /// polar objectDivergence (azimuthRange) given for a Cartesian block
+      /// format; using Cartesian divergence with the default positionRange
+      DIVERGENCE_AZIMUTHRANGE_IGNORED,
     };
 
     Code code;

@@ -8,6 +8,7 @@
 #include "ear/bs2051.hpp"
 #include "ear/ear.hpp"
 #include "ear/metadata.hpp"
+#include "common/geom.hpp"
 
 using namespace ear;
 
@@ -131,6 +132,168 @@ TEST_CASE("gain_value") {
   REQUIRE(gainMap.diffuse.size() == 0);
 }
 
+// channel lock and divergence tests ported from the reference implementation
+// (ear/core/objectbased/test/test_gain_calc.py)
+
+TEST_CASE("channel_lock") {
+  auto layout = getLayout("4+5+0").withoutLfe();
+  GainCalculatorObjectsTester gainCalc(layout);
+
+  SECTION("on_speaker") {
+    auto otm = otmWithPos(PolarPosition{0.0, 0.0, 1.0});
+    otm.channelLock = ChannelLock(true, 1.0);
+    auto gainMap = gainCalc.run(otm);
+    REQUIRE(gainMap.direct.size() == 1);
+    REQUIRE(gainMap.direct.at("M+000") == Approx(1.0));
+  }
+  SECTION("close") {
+    auto otm = otmWithPos(PolarPosition{14.0, 0.0, 1.0});
+    otm.channelLock = ChannelLock(true, 1.0);
+    auto gainMap = gainCalc.run(otm);
+    REQUIRE(gainMap.direct.size() == 1);
+    REQUIRE(gainMap.direct.at("M+000") == Approx(1.0));
+  }
+  SECTION("not_close_enough") {
+    auto otm = otmWithPos(PolarPosition{15.0, 0.0, 1.0});
+    double maxDistance = (cart(0.0, 0.0, 1.0) - cart(15.0, 0.0, 1.0)).norm() - 0.01;
+    otm.channelLock = ChannelLock(true, maxDistance);
+    auto gainMap = gainCalc.run(otm);
+    REQUIRE(gainMap.direct.size() == 2);
+    REQUIRE(gainMap.direct.at("M+000") == Approx(std::sqrt(0.5)));
+    REQUIRE(gainMap.direct.at("M+030") == Approx(std::sqrt(0.5)));
+  }
+  SECTION("abs_elevation_priority") {
+    auto otm = otmWithPos(PolarPosition{30.0, 15.0, 1.0});
+    otm.channelLock = ChannelLock(true);
+    auto gainMap = gainCalc.run(otm);
+    REQUIRE(gainMap.direct.size() == 1);
+    REQUIRE(gainMap.direct.at("M+030") == Approx(1.0));
+  }
+  SECTION("abs_az_priority_left") {
+    auto otm = otmWithPos(PolarPosition{15.0, 0.0, 1.0});
+    otm.channelLock = ChannelLock(true);
+    auto gainMap = gainCalc.run(otm);
+    REQUIRE(gainMap.direct.size() == 1);
+    REQUIRE(gainMap.direct.at("M+000") == Approx(1.0));
+  }
+  SECTION("abs_az_priority_right") {
+    auto otm = otmWithPos(PolarPosition{-15.0, 0.0, 1.0});
+    otm.channelLock = ChannelLock(true);
+    auto gainMap = gainCalc.run(otm);
+    REQUIRE(gainMap.direct.size() == 1);
+    REQUIRE(gainMap.direct.at("M+000") == Approx(1.0));
+  }
+  SECTION("az_priority_front_top") {
+    auto otm = otmWithPos(PolarPosition{0.0, 30.0, 1.0});
+    otm.channelLock = ChannelLock(true);
+    auto gainMap = gainCalc.run(otm);
+    REQUIRE(gainMap.direct.size() == 1);
+    REQUIRE(gainMap.direct.at("U-030") == Approx(1.0));
+  }
+  SECTION("az_priority_rear_top") {
+    auto otm = otmWithPos(PolarPosition{180.0, 30.0, 1.0});
+    otm.channelLock = ChannelLock(true);
+    auto gainMap = gainCalc.run(otm);
+    REQUIRE(gainMap.direct.size() == 1);
+    REQUIRE(gainMap.direct.at("U-110") == Approx(1.0));
+  }
+  SECTION("az_priority_rear_mid") {
+    auto otm = otmWithPos(PolarPosition{180.0, 0.0, 1.0});
+    otm.channelLock = ChannelLock(true);
+    auto gainMap = gainCalc.run(otm);
+    REQUIRE(gainMap.direct.size() == 1);
+    REQUIRE(gainMap.direct.at("M-110") == Approx(1.0));
+  }
+  SECTION("with LFE in layout") {
+    GainCalculatorObjectsTester gainCalcLfe(getLayout("4+5+0"));
+    auto otm = otmWithPos(PolarPosition{14.0, 0.0, 1.0});
+    otm.channelLock = ChannelLock(true);
+    auto gainMap = gainCalcLfe.run(otm);
+    REQUIRE(gainMap.direct.size() == 1);
+    REQUIRE(gainMap.direct.at("M+000") == Approx(1.0));
+  }
+}
+
+TEST_CASE("divergence") {
+  auto layout = getLayout("4+5+0").withoutLfe();
+  GainCalculatorObjectsTester gainCalc(layout);
+
+  SECTION("half") {
+    auto otm = otmWithPos(PolarPosition{0.0, 0.0, 1.0});
+    otm.objectDivergence = PolarObjectDivergence(0.5, 30.0);
+    auto gainMap = gainCalc.run(otm);
+    REQUIRE(gainMap.direct.size() == 3);
+    REQUIRE(gainMap.direct.at("M+000") == Approx(std::sqrt(1.0 / 3.0)));
+    REQUIRE(gainMap.direct.at("M+030") == Approx(std::sqrt(1.0 / 3.0)));
+    REQUIRE(gainMap.direct.at("M-030") == Approx(std::sqrt(1.0 / 3.0)));
+  }
+  SECTION("full") {
+    auto otm = otmWithPos(PolarPosition{0.0, 0.0, 1.0});
+    otm.objectDivergence = PolarObjectDivergence(1.0, 30.0);
+    auto gainMap = gainCalc.run(otm);
+    REQUIRE(gainMap.direct.size() == 2);
+    REQUIRE(gainMap.direct.at("M+030") == Approx(std::sqrt(0.5)));
+    REQUIRE(gainMap.direct.at("M-030") == Approx(std::sqrt(0.5)));
+  }
+  SECTION("azimuth") {
+    auto otm = otmWithPos(PolarPosition{(30.0 + 110.0) / 2.0, 0.0, 1.0});
+    otm.objectDivergence = PolarObjectDivergence(1.0, (110.0 - 30.0) / 2.0);
+    auto gainMap = gainCalc.run(otm);
+    REQUIRE(gainMap.direct.size() == 2);
+    REQUIRE(gainMap.direct.at("M+030") == Approx(std::sqrt(0.5)));
+    REQUIRE(gainMap.direct.at("M+110") == Approx(std::sqrt(0.5)));
+  }
+  SECTION("elevation") {
+    Eigen::Vector3d p = cart(30.0, 30.0, 1.0);
+    p(0) = 0.0;
+    auto otm = otmWithPos(PolarPosition{0.0, elevation(p), 1.0});
+    otm.objectDivergence = PolarObjectDivergence(
+        1.0, degrees(std::asin(cart(-30.0, 30.0, 1.0)(0))));
+    auto gainMap = gainCalc.run(otm);
+    REQUIRE(gainMap.direct.size() == 2);
+    REQUIRE(gainMap.direct.at("U+030") == Approx(std::sqrt(0.5)));
+    REQUIRE(gainMap.direct.at("U-030") == Approx(std::sqrt(0.5)));
+  }
+  SECTION("azimuth_elevation") {
+    Eigen::Vector3d p = cart(40.0, 30.0, 1.0);
+    p(0) = 0.0;
+    auto otm = otmWithPos(PolarPosition{70.0, elevation(p), 1.0});
+    otm.objectDivergence = PolarObjectDivergence(
+        1.0, degrees(std::asin(cart(-40.0, 30.0, 1.0)(0))));
+    auto gainMap = gainCalc.run(otm);
+    REQUIRE(gainMap.direct.size() == 2);
+    REQUIRE(gainMap.direct.at("U+030") == Approx(std::sqrt(0.5)));
+    REQUIRE(gainMap.direct.at("U+110") == Approx(std::sqrt(0.5)));
+  }
+  SECTION("normalised") {
+    for (auto params : std::vector<std::pair<double, double>>{
+             {1.0, 0.0}, {1.0, 10.0}, {0.5, 10.0}, {1.0, 40.0}, {0.3, 10.0}, {0.7, 10.0}}) {
+      auto otm = otmWithPos(PolarPosition{0.0, 0.0, 1.0});
+      otm.objectDivergence = PolarObjectDivergence(params.first, params.second);
+      auto gainMap = gainCalc.run(otm);
+      double sumSquares = 0.0;
+      for (auto& g : gainMap.direct) sumSquares += g.second * g.second;
+      REQUIRE(std::sqrt(sumSquares) == Approx(1.0));
+    }
+  }
+  SECTION("cartesian divergence in polar mode uses polar divergence with a warning") {
+    auto otm = otmWithPos(PolarPosition{0.0, 0.0, 1.0});
+    otm.objectDivergence = CartesianObjectDivergence(1.0, 1.0);
+    std::vector<Warning> warnings;
+    Gains direct(layout.channels().size()), diffuse(layout.channels().size());
+    GainCalculatorObjects calc(layout);
+    calc.calculate(otm, direct, diffuse,
+                   [&](const Warning& w) { warnings.push_back(w); });
+    REQUIRE(warnings.size() == 1);
+    REQUIRE(warnings[0].code == Warning::Code::DIVERGENCE_POSITIONRANGE_IGNORED);
+    // default azimuthRange of 45 degrees: between M+030 and M+110
+    auto gainMap = mapGainsToChannelNames(layout.channelNames(), direct);
+    REQUIRE(gainMap.at("M+000") == Approx(0.0).margin(1e-6));
+    REQUIRE(gainMap.at("M+030") > 0.5);
+    REQUIRE(gainMap.at("M+110") > 0.0);
+  }
+}
+
 TEST_CASE("not implemented") {
   auto layout = getLayout("4+7+0").withoutLfe();
   GainCalculatorObjectsTester gainCalc(layout);
@@ -143,18 +306,6 @@ TEST_CASE("not implemented") {
   }
   SECTION("Cartesian position") {
     otm.position = CartesianPosition(0.0, 0.0, 0.0);
-    REQUIRE_THROWS_AS(gainCalc.run(otm), not_implemented);
-  }
-  SECTION("objectDivergence polar") {
-    otm.objectDivergence = PolarObjectDivergence(0.5);
-    REQUIRE_THROWS_AS(gainCalc.run(otm), not_implemented);
-  }
-  SECTION("objectDivergence Cartesian") {
-    otm.objectDivergence = CartesianObjectDivergence(0.5);
-    REQUIRE_THROWS_AS(gainCalc.run(otm), not_implemented);
-  }
-  SECTION("channelLock") {
-    otm.channelLock.flag = true;
     REQUIRE_THROWS_AS(gainCalc.run(otm), not_implemented);
   }
   SECTION("zone") {

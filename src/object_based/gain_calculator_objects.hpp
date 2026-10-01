@@ -6,6 +6,7 @@
 #include "ear/layout.hpp"
 #include "ear/metadata.hpp"
 #include "ear/warnings.hpp"
+#include "channel_lock.hpp"
 #include "polar_extent.hpp"
 
 namespace ear {
@@ -29,9 +30,11 @@ namespace ear {
    private:
     Layout _layout;
     std::shared_ptr<PointSourcePanner> _pointSourcePanner;
+    ChannelLockHandler _channelLockHandler;
     PolarExtent _polarExtentPanner;
     Eigen::Array<bool, Eigen::Dynamic, 1> _isLfe;
     Eigen::VectorXd _pvTmp;
+    Eigen::VectorXd _pvTmpDiverged;
   };
 
 }  // namespace ear
