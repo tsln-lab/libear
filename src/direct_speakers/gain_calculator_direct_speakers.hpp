@@ -76,6 +76,10 @@ namespace ear {
 
     Layout _layout;
     std::shared_ptr<PointSourcePanner> _pointSourcePanner;
+    /// allocentric positions (all channels) and panner (non-LFE channels),
+    /// only available for layouts with known allocentric positions
+    boost::optional<Eigen::MatrixXd> _alloPositions;
+    std::shared_ptr<PointSourcePanner> _alloPointSourcePanner;
     ScreenEdgeLockHandler _screenEdgeLockHandler;
     int _nChannels;
     std::vector<std::string> _channelNames;

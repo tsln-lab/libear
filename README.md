@@ -81,6 +81,30 @@ options
 
 are automatically set to `FALSE`.
 
+## Reference parity
+
+This fork ([tsln-lab/libear](https://github.com/tsln-lab/libear)) ports the
+Objects and DirectSpeakers features that upstream libear does not implement
+from the reference implementation, the [EBU ADM
+Renderer](https://github.com/ebu/ebu_adm_renderer): Cartesian (allocentric)
+positions and extent, `objectDivergence`, `channelLock`, `zoneExclusion`,
+`screenRef`, `screenEdgeLock`, and `M+SC`/`M-SC` loudspeakers wider than 25
+degrees.
+
+Every port is validated against gains produced by the reference
+implementation: `tools/reference/generate_objects_reference.py` and
+`generate_direct_speakers_reference.py` render a fixed set of block formats
+with the `ear` Python package and write them to `tests/reference/`, and
+`objects_reference_tests` / `direct_speakers_reference_tests` compare libear
+against that data (to 1e-9, or 1e-5 where the single-precision extent panner
+is involved). To regenerate the data after changing the case lists:
+
+``` shell
+python3 -m venv ve && ve/bin/pip install ear
+ve/bin/python tools/reference/generate_objects_reference.py
+ve/bin/python tools/reference/generate_direct_speakers_reference.py
+```
+
 ## License
 
 ```

@@ -1,8 +1,11 @@
 #include "point_source_panner.hpp"
+#include "ear/exceptions.hpp"
+#include <boost/math/constants/constants.hpp>
 
 #include <Eigen/Dense>
 #include <boost/algorithm/clamp.hpp>
 #include <boost/make_unique.hpp>
+#include "allocentric.hpp"
 #include "convex_hull.hpp"
 #include "ear/bs2051.hpp"
 #include "ear/helpers/assert.hpp"
@@ -391,11 +394,132 @@ namespace ear {
     return boost::none;
   }
 
-  boost::optional<Eigen::VectorXd> AllocentricPanner::handle(Eigen::Vector3d) {
-    return boost::none;
+  AllocentricPanner::AllocentricPanner(Eigen::MatrixXd positions)
+      : _numChannels(static_cast<int>(positions.rows())) {
+    // build the speaker tree; see _speaker_tree in the reference
+    // implementation. Exact comparisons are used deliberately, as the
+    // positions come from a fixed table.
+    for (int index = 0; index < _numChannels; index++) {
+      double x = positions(index, 0), y = positions(index, 1),
+             z = positions(index, 2);
+
+      auto planeIt = _tree.begin();
+      for (; planeIt != _tree.end(); ++planeIt) {
+        if (planeIt->z == z) break;
+        if (planeIt->z > z) {
+          planeIt = _tree.end();
+          break;
+        }
+      }
+      if (planeIt == _tree.end()) {
+        // insert a new plane keeping the planes sorted by z
+        auto insertIt = _tree.begin();
+        while (insertIt != _tree.end() && insertIt->z < z) ++insertIt;
+        _tree.insert(insertIt, Plane{z, {Row{y, {Column{x, index}}}}});
+        continue;
+      }
+
+      auto& rows = planeIt->rows;
+      auto rowIt = rows.begin();
+      for (; rowIt != rows.end(); ++rowIt) {
+        if (rowIt->y == y) break;
+        if (rowIt->y > y) {
+          rowIt = rows.end();
+          break;
+        }
+      }
+      if (rowIt == rows.end()) {
+        auto insertIt = rows.begin();
+        while (insertIt != rows.end() && insertIt->y < y) ++insertIt;
+        rows.insert(insertIt, Row{y, {Column{x, index}}});
+        continue;
+      }
+
+      auto& columns = rowIt->columns;
+      auto insertIt = columns.begin();
+      while (insertIt != columns.end() && insertIt->x < x) ++insertIt;
+      if (insertIt != columns.end() && insertIt->x == x)
+        throw invalid_argument(
+            "two loudspeakers with the same allocentric position");
+      columns.insert(insertIt, Column{x, index});
+    }
   }
 
-  int AllocentricPanner::numberOfOutputChannels() const { return 0; }
+  std::pair<double, double> AllocentricPanner::singleBalancePan(double minimum,
+                                                                double maximum,
+                                                                double value) {
+    if (minimum == maximum) return {1.0, 1.0};
+    if (value <= minimum) return {0.0, 1.0};
+    if (value >= maximum) return {1.0, 0.0};
+    double a = (value - minimum) / (maximum - minimum);
+    double aa = a * boost::math::constants::pi<double>() / 2.0;
+    return {std::cos(aa), std::sin(aa)};
+  }
+
+  std::pair<int, int> AllocentricPanner::findPlanes(double z) const {
+    if (z <= _tree[0].z) return {0, 0};
+    for (size_t i = 0; i < _tree.size(); i++) {
+      if (_tree[i].z == z) return {(int)i, (int)i};
+      if (_tree[i].z > z) return {(int)i - 1, (int)i};
+    }
+    return {(int)_tree.size() - 1, (int)_tree.size() - 1};
+  }
+
+  std::pair<int, int> AllocentricPanner::findRows(const Plane& plane,
+                                                  double y) {
+    if (y <= plane.rows[0].y) return {0, 0};
+    for (size_t i = 0; i < plane.rows.size(); i++) {
+      if (plane.rows[i].y == y) return {(int)i, (int)i};
+      if (plane.rows[i].y > y) return {(int)i - 1, (int)i};
+    }
+    return {(int)plane.rows.size() - 1, (int)plane.rows.size() - 1};
+  }
+
+  std::pair<int, int> AllocentricPanner::findColumns(const Row& row,
+                                                     double x) {
+    if (x <= row.columns[0].x) return {0, 0};
+    for (size_t i = 0; i < row.columns.size(); i++) {
+      if (row.columns[i].x == x) return {(int)i, (int)i};
+      if (row.columns[i].x > x) return {(int)i - 1, (int)i};
+    }
+    return {(int)row.columns.size() - 1, (int)row.columns.size() - 1};
+  }
+
+  boost::optional<Eigen::VectorXd> AllocentricPanner::handle(
+      Eigen::Vector3d position) {
+    Eigen::VectorXd ret = Eigen::VectorXd::Zero(_numChannels);
+
+    std::pair<int, int> zPlanes = findPlanes(position(2));
+    std::pair<double, double> zGains = singleBalancePan(
+        _tree[zPlanes.first].z, _tree[zPlanes.second].z, position(2));
+
+    for (auto zz : {std::make_pair(zGains.first, zPlanes.first),
+                    std::make_pair(zGains.second, zPlanes.second)}) {
+      const Plane& plane = _tree[zz.second];
+      std::pair<int, int> yRows = findRows(plane, position(1));
+      std::pair<double, double> yGains = singleBalancePan(
+          plane.rows[yRows.first].y, plane.rows[yRows.second].y, position(1));
+
+      for (auto yy : {std::make_pair(yGains.first, yRows.first),
+                      std::make_pair(yGains.second, yRows.second)}) {
+        const Row& row = plane.rows[yy.second];
+        std::pair<int, int> xColumns = findColumns(row, position(0));
+        std::pair<double, double> xGains =
+            singleBalancePan(row.columns[xColumns.first].x,
+                             row.columns[xColumns.second].x, position(0));
+
+        for (auto xx : {std::make_pair(xGains.first, xColumns.first),
+                        std::make_pair(xGains.second, xColumns.second)}) {
+          ret(row.columns[xx.second].channel) = zz.first * yy.first * xx.first;
+        }
+      }
+    }
+    return ret;
+  }
+
+  int AllocentricPanner::numberOfOutputChannels() const {
+    return _numChannels;
+  }
 
   std::shared_ptr<PointSourcePanner> configureStereoPolarPanner(
       const Layout& layout) {
@@ -470,8 +594,49 @@ namespace ear {
     return {positionsReal, positionsNominal, virtualVerts, downmix};
   }
 
+  /// Does the layout have the same channels and nominal positions as the
+  /// stock BS.2051 layout with the same name?
+  bool hasStockNominalPositions(const Layout& layout) {
+    const Layout* stock = nullptr;
+    for (const Layout& l : loadLayouts())
+      if (l.name() == layout.name()) stock = &l;
+    if (!stock) return false;
+
+    const auto& channels = layout.channels();
+    const auto& stockChannels = stock->channels();
+    if (channels.size() != stockChannels.size()) return false;
+
+    for (size_t i = 0; i < channels.size(); i++) {
+      if (channels[i].name() != stockChannels[i].name()) return false;
+      PolarPosition a = channels[i].polarPositionNominal();
+      PolarPosition b = stockChannels[i].polarPositionNominal();
+      if (a.azimuth != b.azimuth || a.elevation != b.elevation ||
+          a.distance != b.distance)
+        return false;
+    }
+    return true;
+  }
+
+  /// Modify layout to set the nominal positions of M+-SC; 45 degrees if they
+  /// are wider than 30 degrees, otherwise 15. This ensures that the
+  /// triangulation is correct for both the nominal and real loudspeaker
+  /// positions when the ordering is changed.
+  Layout setScreenSpeakerNominalPositions(const Layout& layout) {
+    Layout ret = layout;
+    for (Channel& channel : ret.channels()) {
+      if (channel.name() == "M+SC" || channel.name() == "M-SC") {
+        double oldAz = channel.polarPosition().azimuth;
+        double newAz = (oldAz > 0 ? 1.0 : -1.0) * (std::abs(oldAz) > 30.0 ? 45.0 : 15.0);
+        channel.polarPositionNominal(PolarPosition(newAz, 0.0, 1.0));
+      }
+    }
+    return ret;
+  }
+
   std::shared_ptr<PointSourcePanner> configureFullPolarPanner(
-      const Layout& layout) {
+      const Layout& layoutIn) {
+    Layout layout = setScreenSpeakerNominalPositions(layoutIn);
+
     std::vector<Eigen::Vector3d> positionsReal;
     std::vector<Eigen::Vector3d> positionsNominal;
     std::set<int> virtualVerts;
@@ -480,11 +645,14 @@ namespace ear {
         getAugmentedLayout(layout);
 
     // Facets of the convex hull; each set represents a facet and contains the
-    // indices of its corners in positions.
+    // indices of its corners in positions. Pre-computed facets are only used
+    // if the layout has the nominal positions of the stock BS.2051 layout
+    // with that name (which is not the case for wide screen loudspeakers).
     auto facets_it = FACETS.find(layout.name());
-    std::vector<Facet> facets = facets_it != FACETS.end()
-                                    ? facets_it->second
-                                    : convex_hull(positionsNominal);
+    std::vector<Facet> facets =
+        facets_it != FACETS.end() && hasStockNominalPositions(layout)
+            ? facets_it->second
+            : convex_hull(positionsNominal);
 
     // Turn the facets into regions for the point source panner.
     std::vector<std::unique_ptr<RegionHandler>> regions;
@@ -561,17 +729,11 @@ namespace ear {
     for (auto& channel : layout.channels()) {
       if (channel.name() == "M+SC" || channel.name() == "M-SC") {
         double abs_az = std::abs(channel.polarPosition().azimuth);
-        if (!((5.0 <= abs_az && abs_az < 25.0) ||
-              (35.0 <= abs_az && abs_az < 60.0))) {
+        if (!((5.0 <= abs_az && abs_az <= 25.0) ||
+              (35.0 <= abs_az && abs_az <= 60.0))) {
           throw invalid_argument(
               "M+SC or M-SC has azimuth not in the allowed ranges of 5 to 25 "
               "and 35 to 60 degrees");
-        }
-
-        if (25.0 < abs_az) {
-          throw not_implemented(
-              "M+SC and M-SC with azimuths wider than 25 degrees are not "
-              "currently supported");
         }
       }
     }
@@ -580,7 +742,8 @@ namespace ear {
   std::shared_ptr<PointSourcePanner> configureAllocentricPanner(
       const Layout& layout) {
     checkScreenSpeakers(layout);
-    return std::make_shared<AllocentricPanner>();
+    return std::make_shared<AllocentricPanner>(
+        allocentric::positionsForLayout(layout));
   }
 
   std::shared_ptr<PointSourcePanner> configurePolarPanner(

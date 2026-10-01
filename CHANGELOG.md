@@ -4,9 +4,11 @@
 
 ### Added
 
-- `channelLock` and `objectDivergence` (polar) support in `GainCalculatorObjects`, ported from the reference implementation.
+- `GainCalculatorObjects` now implements all Objects parameters, ported from the reference implementation: Cartesian positions (allocentric panner and Cartesian extent), `objectDivergence`, `channelLock`, `zoneExclusion`, `screenRef` and `screenEdgeLock` (new `ObjectsTypeMetadata::screenEdgeLock` member).
+- `GainCalculatorDirectSpeakers` supports Cartesian positions and `screenEdgeLock`.
+- `M+SC` and `M-SC` loudspeakers with azimuths between 35 and 60 degrees.
 - Warning codes `DIVERGENCE_POSITIONRANGE_IGNORED` and `DIVERGENCE_AZIMUTHRANGE_IGNORED` for mismatched divergence types.
-- `objects_reference_tests`: comparison of `GainCalculatorObjects` against gains generated from the reference implementation (`tools/reference/generate_objects_reference.py`).
+- `objects_reference_tests` and `direct_speakers_reference_tests`: comparison against gains generated from the reference implementation (`tools/reference/`).
 
 ### Changed
 

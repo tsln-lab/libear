@@ -203,13 +203,48 @@ namespace ear {
     std::shared_ptr<PointSourcePanner> _psp;
   };
 
+  /** @brief Point source panner for allocentric (Cartesian) positions.
+   *
+   * Loudspeakers are arranged in a tree of z planes, y rows and x columns;
+   * the position is panned between the two nearest planes, rows and columns
+   * with a constant-power pan. See Rec. ITU-R BS.2127 section 7.3.9 and
+   * `AllocentricPanner` in the reference implementation.
+   */
   class AllocentricPanner : public PointSourcePanner {
    public:
-    AllocentricPanner() = default;
-    ~AllocentricPanner() = default;
+    /// @param positions allocentric loudspeaker positions, one row per
+    /// channel
+    explicit AllocentricPanner(Eigen::MatrixXd positions);
+    ~AllocentricPanner() override = default;
 
-    boost::optional<Eigen::VectorXd> handle(Eigen::Vector3d position) override;
+    /// Gains for each loudspeaker; this never returns none
+    boost::optional<Eigen::VectorXd> handle(
+        Eigen::Vector3d position) override;
     int numberOfOutputChannels() const override;
+
+   private:
+    struct Column {
+      double x;
+      int channel;
+    };
+    struct Row {
+      double y;
+      std::vector<Column> columns;
+    };
+    struct Plane {
+      double z;
+      std::vector<Row> rows;
+    };
+
+    static std::pair<double, double> singleBalancePan(double minimum,
+                                                      double maximum,
+                                                      double value);
+    std::pair<int, int> findPlanes(double z) const;
+    static std::pair<int, int> findRows(const Plane& plane, double y);
+    static std::pair<int, int> findColumns(const Row& row, double x);
+
+    std::vector<Plane> _tree;
+    int _numChannels;
   };
 
   std::shared_ptr<PointSourcePanner> configureStereoPolarPanner(

@@ -1,10 +1,12 @@
 #include <Eigen/Core>
 #include <boost/make_unique.hpp>
 #include <catch2/catch.hpp>
+#include <cmath>
 #include <map>
 #include <string>
 #include <vector>
 #include "common/geom.hpp"
+#include "common/point_source_panner.hpp"
 #include "ear/bs2051.hpp"
 #include "ear/ear.hpp"
 #include "ear/metadata.hpp"
@@ -223,7 +225,27 @@ TEST_CASE("test_dist_bounds_polar") {
   REQUIRE_VECTOR_APPROX(actual, directPv(layout, "T+000"));
 }
 
-TEST_CASE("test_dist_bounds_cart", "[!shouldfail]") {
+Gains multiPv(const Layout& layout,
+              const std::vector<std::pair<std::string, double>>& gains) {
+  Gains pv(layout.channels().size(), 0.0);
+  for (const auto& gain : gains)
+    pv[layout.indexForName(gain.first).get()] = gain.second;
+  return pv;
+}
+
+Gains pspPv(const Layout& layout, Eigen::Vector3d position) {
+  auto psp = configurePolarPanner(layout.withoutLfe());
+  Eigen::VectorXd gains = psp->handle(position).get();
+  Gains pv(layout.channels().size(), 0.0);
+  size_t j = 0;
+  for (size_t i = 0; i < layout.channels().size(); i++)
+    if (!layout.channels()[i].isLfe()) pv[i] = gains(j++);
+  return pv;
+}
+
+// ported from test_dist_bounds_cart in the reference implementation; the
+// positions and bounds are allocentric
+TEST_CASE("test_dist_bounds_cart") {
   Layout layout = getLayout("9+10+3");
   GainCalculatorDirectSpeakers p(layout);
 
@@ -231,7 +253,6 @@ TEST_CASE("test_dist_bounds_cart", "[!shouldfail]") {
   CartesianSpeakerPosition pos;
 
   Gains actual(layout.channels().size(), 0.0);
-  Gains expected(layout.channels().size(), 0.0);
 
   // on speaker -> direct
   pos = CartesianSpeakerPosition(1.0, 0.0, 0.0);
@@ -254,27 +275,26 @@ TEST_CASE("test_dist_bounds_cart", "[!shouldfail]") {
   REQUIRE_VECTOR_APPROX(actual, directPv(layout, "M-090"));
 
   // pick closest within bound
-  Eigen::Vector3d pos30 = cart(30.0, 0.0, 1.0);
-  Eigen::Vector3d pos5 = cart(5.0, 0.0, 1.0);
-  Eigen::Vector3d pos25 = cart(25.0, 0.0, 1.0);
-
-  pos = CartesianSpeakerPosition(pos5(0), pos5(1), 0.0);
-  pos.XMin = pos30(0);
-  pos.XMax = -pos30(0);
-  pos.YMin = pos30(1);
-  pos.YMax = 1.0;
+  pos = CartesianSpeakerPosition(-0.45, 1.0, 0.0);
+  pos.XMin = -1.0;
+  pos.XMax = 1.0;
   tm.position = pos;
   p.calculate(tm, actual);
   REQUIRE_VECTOR_APPROX(actual, directPv(layout, "M+000"));
 
-  pos = CartesianSpeakerPosition(pos25(0), pos25(1), 0.0);
-  pos.XMin = pos30(0);
-  pos.XMax = -pos30(0);
-  pos.YMin = pos30(1);
-  pos.YMax = 1.0;
+  pos = CartesianSpeakerPosition(-0.55, 1.0, 0.0);
+  pos.XMin = -1.0;
+  pos.XMax = 1.0;
   tm.position = pos;
   p.calculate(tm, actual);
   REQUIRE_VECTOR_APPROX(actual, directPv(layout, "M+030"));
+
+  // no bounds, and position not on speaker -> use psp
+  pos = CartesianSpeakerPosition(-0.5, 1.0, 0.0);
+  tm.position = pos;
+  p.calculate(tm, actual);
+  REQUIRE_VECTOR_APPROX(
+      actual, multiPv(layout, {{"M+000", std::sqrt(0.5)}, {"M+030", std::sqrt(0.5)}}));
 }
 
 TEST_CASE("mapping") {
@@ -338,31 +358,53 @@ TEST_CASE("mapping_per_input") {
   }
 }
 
-TEST_CASE("not implemented") {
-  auto layout = getLayout("4+7+0").withoutLfe();
+// ported from test_screen_edge_lock_polar in the reference implementation
+TEST_CASE("screen_edge_lock_polar") {
+  Layout layout = getLayout("4+5+0");
   GainCalculatorDirectSpeakers p(layout);
-  Gains gains(layout.channels().size(), 0.0);
-
+  Gains actual(layout.channels().size(), 0.0);
   DirectSpeakersTypeMetadata tm;
 
-  SECTION("screenEdgeLock horizontal") {
-    PolarSpeakerPosition pos;
-    pos.screenEdgeLock.horizontal = "left";
-    tm.position = pos;
-    REQUIRE_THROWS_AS(p.calculate(tm, gains), not_implemented);
-  }
+  // no bound set -> use psp
+  PolarSpeakerPosition pos(-30.0, 0.0, 1.0);
+  pos.screenEdgeLock.horizontal = "right";
+  tm.position = pos;
+  p.calculate(tm, actual);
+  REQUIRE_VECTOR_APPROX(actual, pspPv(layout, cart(-29.0, 0.0, 1.0)));
 
-  SECTION("screenEdgeLock vertical") {
-    PolarSpeakerPosition pos;
-    pos.screenEdgeLock.vertical = "top";
-    tm.position = pos;
-    REQUIRE_THROWS_AS(p.calculate(tm, gains), not_implemented);
-  }
+  // bound set -> find closest to screen edge
+  pos = PolarSpeakerPosition(0.0, 0.0, 1.0);
+  pos.azimuthMin = -45.0;
+  pos.azimuthMax = 10.0;
+  pos.screenEdgeLock.horizontal = "right";
+  tm.position = pos;
+  p.calculate(tm, actual);
+  REQUIRE_VECTOR_APPROX(actual, directPv(layout, "M-030"));
+}
 
-  SECTION("cartesian positions") {
-    tm.position = CartesianSpeakerPosition();
-    REQUIRE_THROWS_AS(p.calculate(tm, gains), not_implemented);
-  }
+// ported from test_screen_edge_lock_cart in the reference implementation
+TEST_CASE("screen_edge_lock_cart") {
+  Layout layout = getLayout("4+5+0");
+  GainCalculatorDirectSpeakers p(layout);
+  Gains actual(layout.channels().size(), 0.0);
+  DirectSpeakersTypeMetadata tm;
+
+  // no bound set -> use psp
+  CartesianSpeakerPosition pos(0.0, 1.0, 0.0);
+  pos.screenEdgeLock.horizontal = "right";
+  tm.position = pos;
+  p.calculate(tm, actual);
+  REQUIRE_VECTOR_APPROX(actual, pspPv(layout, cart(-29.0, 0.0, 1.0)));
+
+  // bound set -> find closest to screen edge
+  pos = CartesianSpeakerPosition(0.0, 1.0, 0.0);
+  pos.XMin = -0.1;
+  pos.XMax = 1.0;
+  pos.YMin = 0.5;
+  pos.screenEdgeLock.horizontal = "right";
+  tm.position = pos;
+  p.calculate(tm, actual);
+  REQUIRE_VECTOR_APPROX(actual, directPv(layout, "M-030"));
 }
 
 TEST_CASE("adm errors") {

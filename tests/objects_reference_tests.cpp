@@ -17,7 +17,9 @@ using namespace ear::reference;
 namespace {
   /// features implemented by libear; cases using other features must throw
   /// not_implemented
-  const unsigned implementedFeatures = CHANNEL_LOCK | DIVERGENCE;
+  const unsigned implementedFeatures = CARTESIAN | CHANNEL_LOCK | DIVERGENCE |
+                                       ZONE_EXCLUSION | SCREEN_REF |
+                                       SCREEN_EDGE_LOCK | WIDE_SCREEN_SPEAKERS;
 
   ObjectsTypeMetadata toMetadata(const ObjectsCase& c) {
     ObjectsTypeMetadata otm;
@@ -55,6 +57,10 @@ namespace {
             (float)zone.values[3], 0.0f, 0.0f, ""});
     }
     otm.screenRef = c.screenRef;
+    if (!c.screenEdgeLockHorizontal.empty())
+      otm.screenEdgeLock.horizontal = c.screenEdgeLockHorizontal;
+    if (!c.screenEdgeLockVertical.empty())
+      otm.screenEdgeLock.vertical = c.screenEdgeLockVertical;
     return otm;
   }
 
@@ -89,7 +95,7 @@ TEST_CASE("objects gains match the reference implementation") {
     INFO(describe(c));
 
     if (!calculators.count(c.layout)) {
-      layouts.emplace(c.layout, getLayout(c.layout));
+      layouts.emplace(c.layout, layoutForSpec(c.layout));
       calculators.emplace(c.layout, std::make_unique<GainCalculatorObjects>(layouts.at(c.layout)));
     }
     auto& calc = *calculators.at(c.layout);

@@ -1,4 +1,5 @@
 #include "gain_calculator_direct_speakers.hpp"
+#include "../common/allocentric.hpp"
 
 #include <algorithm>
 #include <limits>
@@ -44,15 +45,6 @@ namespace ear {
       return true;
     }
 
-    // throws an exception if the given component is not implemented
-    struct throw_if_not_implemented : public boost::static_visitor<void> {
-      void operator()(const CartesianSpeakerPosition&) const {
-        throw not_implemented("Cartesian position");
-      }
-
-      template <typename T>
-      void operator()(const T&) const {}
-    };
   }  // namespace
 
   GainCalculatorDirectSpeakersImpl::GainCalculatorDirectSpeakersImpl(
@@ -60,7 +52,7 @@ namespace ear {
       std::map<std::string, std::string> additionalSubstitutions)
       : _layout(layout),
         _pointSourcePanner(configurePolarPanner(_layout.withoutLfe())),
-        _screenEdgeLockHandler(ScreenEdgeLockHandler(_layout.screen())),
+        _screenEdgeLockHandler(_layout.screen(), _layout),
         _nChannels(static_cast<int>(layout.channels().size())),
         _channelNames(layout.channelNames()) {
     std::vector<double> azimuths, elevations, distances;
@@ -75,12 +67,17 @@ namespace ear {
         Eigen::Map<Eigen::VectorXd>(elevations.data(), elevations.size());
     _distances =
         Eigen::Map<Eigen::VectorXd>(distances.data(), distances.size());
-    _positions = toPositionsMatrix(layout.positions());
+    // nominal positions, as in the reference implementation
+    _positions = toPositionsMatrix(layout.nominalPositions());
     _isLfe = copy_vector<decltype(_isLfe)>(layout.isLfe());
     _substitutions = std::map<std::string, std::string>{
         {"LFE", "LFE1"}, {"LFEL", "LFE1"}, {"LFER", "LFE2"}};
     _substitutions.insert(additionalSubstitutions.begin(),
                           additionalSubstitutions.end());
+
+    _alloPositions = allocentric::positionsForLayoutIfKnown(_layout);
+    if (_alloPositions)
+      _alloPointSourcePanner = configureAllocentricPanner(_layout.withoutLfe());
   };
 
   PolarSpeakerPosition GainCalculatorDirectSpeakersImpl::_applyScreenEdgeLock(
@@ -95,7 +92,7 @@ namespace ear {
   GainCalculatorDirectSpeakersImpl::_applyScreenEdgeLock(
       CartesianSpeakerPosition pos) {
     std::tie(pos.X, pos.Y, pos.Z) = _screenEdgeLockHandler.handleVector(
-        toCartesianVector3d(pos), pos.screenEdgeLock);
+        toCartesianVector3d(pos), pos.screenEdgeLock, true);
     return pos;
   }
 
@@ -143,8 +140,8 @@ namespace ear {
     if (std::regex_search(label, idMatch, SPEAKER_URN_REGEX)) {
       ret = idMatch[1].str();
     }
-    if (_substitutions.count(label)) {
-      ret = _substitutions.at(label);
+    if (_substitutions.count(ret)) {
+      ret = _substitutions.at(ret);
     }
     return ret;
   }
@@ -183,6 +180,12 @@ namespace ear {
   std::vector<std::pair<int, double>>
   GainCalculatorDirectSpeakersImpl::_findCandidates(
       const CartesianSpeakerPosition& pos, bool isLfe, double tol) {
+    if (!_alloPositions)
+      throw invalid_argument(
+          "Cartesian DirectSpeakers positions are not possible for layout '" +
+          _layout.name() + "': no allocentric loudspeaker positions");
+    const Eigen::MatrixXd& _positions = *_alloPositions;
+
     Eigen::RowVector3d cartPosition = toCartesianVector3d(pos);
     std::vector<std::pair<int, double>> candidates;
 
@@ -250,8 +253,6 @@ namespace ear {
           "speakerLabels as specified in the common definitions file");
     direct.check_size(_nChannels);
 
-    boost::apply_visitor(throw_if_not_implemented(), metadata.position);
-
     double tol = 1e-5;
     bool isLfe = _isLfeChannel(metadata, warning_cb);
     direct.zero();
@@ -313,7 +314,14 @@ namespace ear {
       return;
     } else {
       Eigen::Vector3d pos = toCartesianVector3d(shiftedPosition);
-      Eigen::VectorXd gains = _pointSourcePanner->handle(pos).get();
+      bool cartesian = shiftedPosition.which() == 1;
+      if (cartesian && !_alloPointSourcePanner)
+        throw invalid_argument(
+            "Cartesian DirectSpeakers positions are not possible for layout '" +
+            _layout.name() + "': no allocentric loudspeaker positions");
+      Eigen::VectorXd gains = cartesian
+                                  ? _alloPointSourcePanner->handle(pos).get()
+                                  : _pointSourcePanner->handle(pos).get();
       mask_write(direct, !_isLfe, gains);
       return;
     }

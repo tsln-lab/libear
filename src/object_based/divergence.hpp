@@ -27,4 +27,15 @@ namespace ear {
   DivergedPositions divergePolar(const Eigen::Vector3d& position,
                                  double divergence, double azimuthRange);
 
+  /** @brief Implement Cartesian object divergence.
+   *
+   * @param position allocentric source position
+   * @param divergence objectDivergence value, 0 to 1
+   * @param positionRange positionRange of the objectDivergence
+   * @return weights and positions for the left, centre and right sources
+   *   (or just the original position if divergence is zero)
+   */
+  DivergedPositions divergeCartesian(const Eigen::Vector3d& position,
+                                     double divergence, double positionRange);
+
 }  // namespace ear

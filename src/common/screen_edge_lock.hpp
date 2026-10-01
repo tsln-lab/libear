@@ -1,33 +1,48 @@
 #pragma once
 #include <Eigen/Core>
 #include <boost/optional.hpp>
-#include "ear/exceptions.hpp"
+#include <tuple>
+#include <utility>
+#include "ear/layout.hpp"
 #include "ear/metadata.hpp"
 #include "ear/screen.hpp"
+#include "screen_common.hpp"
 
 namespace ear {
+
+  /** @brief Lock positions to the edges of the reproduction screen.
+   *
+   * See Rec. ITU-R BS.2127 section 7.3.4 and `ScreenEdgeLockHandler` in the
+   * reference implementation (`ear.core.screen_edge_lock`).
+   */
   class ScreenEdgeLockHandler {
    public:
-    ScreenEdgeLockHandler(boost::optional<Screen> reproductionScreen)
-        : _reproductionScreen(reproductionScreen){};
+    ScreenEdgeLockHandler(boost::optional<Screen> reproductionScreen,
+                          const Layout& layout);
 
     std::pair<double, double> handleAzimuthElevation(
-        double azimuth, double elevation, ScreenEdgeLock screenEdgeLock) {
-      if (screenEdgeLock.horizontal || screenEdgeLock.vertical)
-        throw not_implemented("screenEdgeLock");
+        double azimuth, double elevation,
+        const ScreenEdgeLock& screenEdgeLock) const;
 
-      return std::make_pair(azimuth, elevation);
-    }
-
+    /** @param pos source position (polar space if !cartesian, allocentric
+     *   space if cartesian)
+     */
     std::tuple<double, double, double> handleVector(
-        Eigen::Vector3d pos, ScreenEdgeLock screenEdgeLock) {
-      if (screenEdgeLock.horizontal || screenEdgeLock.vertical)
-        throw not_implemented("screenEdgeLock");
+        const Eigen::Vector3d& pos, const ScreenEdgeLock& screenEdgeLock,
+        bool cartesian = false) const;
 
-      return std::make_tuple(pos(0), pos(1), pos(2));
-    }
+    Eigen::Vector3d handle(const Eigen::Vector3d& pos,
+                           const ScreenEdgeLock& screenEdgeLock,
+                           bool cartesian = false) const;
 
    private:
-    boost::optional<Screen> _reproductionScreen;
+    bool shouldModifyPosition(const ScreenEdgeLock& screenEdgeLock) const;
+    std::pair<double, double> lockToScreenEdge(
+        double azimuth, double elevation,
+        const ScreenEdgeLock& screenEdgeLock) const;
+
+    boost::optional<PolarEdges> _repScreenEdges;
+    Layout _layout;
   };
+
 }  // namespace ear

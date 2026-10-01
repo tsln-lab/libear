@@ -8,10 +8,14 @@ generate_points_file(
 add_library(ear
   bs2051.cpp
   bs2051_layouts.cpp
+  common/allocentric.cpp
   common/convex_hull.cpp
   common/facets.cpp
   common/geom.cpp
   common/point_source_panner.cpp
+  common/screen_common.cpp
+  common/screen_edge_lock.cpp
+  common/screen_scale.cpp
   conversion.cpp
   decorrelate.cpp
   direct_speakers/gain_calculator_direct_speakers.cpp
@@ -29,9 +33,11 @@ add_library(ear
   object_based/polar_extent.cpp
   object_based/polar_extent_scalar.cpp
   object_based/polar_extent_simd.cpp
+  object_based/allo_extent.cpp
   object_based/channel_lock.cpp
   object_based/divergence.cpp
   object_based/gain_calculator_objects.cpp
+  object_based/zone_exclusion.cpp
   warnings.cpp
   ${CMAKE_CURRENT_BINARY_DIR}/hoa_points_file.cpp
 )

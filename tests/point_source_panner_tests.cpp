@@ -521,16 +521,19 @@ TEST_CASE("configure_full_polar_panner") {
 TEST_CASE("screen_loudspeaker_positions") {
   auto layout = getLayout("4+9+0").withoutLfe();
 
-  SECTION("too wide") {
-    SECTION("+") {
-      for (auto& channel : layout.channels())
-        if (channel.name() == "M+SC") channel.polarPosition({40.0, 0.0, 1.0});
-      REQUIRE_THROWS_AS(configurePolarPanner(layout), not_implemented);
+  SECTION("wide") {
+    // screen loudspeakers between 35 and 60 degrees are supported; a source
+    // at the loudspeaker position is panned to it alone
+    for (auto& channel : layout.channels()) {
+      if (channel.name() == "M+SC") channel.polarPosition({40.0, 0.0, 1.0});
+      if (channel.name() == "M-SC") channel.polarPosition({-40.0, 0.0, 1.0});
     }
-    SECTION("-") {
-      for (auto& channel : layout.channels())
-        if (channel.name() == "M-SC") channel.polarPosition({-40.0, 0.0, 1.0});
-      REQUIRE_THROWS_AS(configurePolarPanner(layout), not_implemented);
+    auto psp = configurePolarPanner(layout);
+    auto pv = psp->handle(cart(40.0, 0.0, 1.0));
+    REQUIRE(pv != boost::none);
+    for (size_t i = 0; i < layout.channels().size(); i++) {
+      double expected = layout.channels()[i].name() == "M+SC" ? 1.0 : 0.0;
+      REQUIRE(pv.get()(i) == Approx(expected).margin(1e-6));
     }
   }
 

@@ -20,33 +20,25 @@ To get started, check out the :doc:`installation` instructions.
 Support
 -------
 
-DirectSpeakers, Objects and HOA typeDefinitions are supported, though the following
+DirectSpeakers, Objects and HOA typeDefinitions are supported, including
+Cartesian (allocentric) positions, ``objectDivergence``, ``channelLock``,
+``zoneExclusion``, ``screenRef`` and ``screenEdgeLock``. The following
 parameters/features are currently not implemented:
 
-Objects:
+HOA:
 
--  Cartesian positions, or ``cartesian == true``
--  ``zoneExclusion``
 -  ``screenRef``
--  ``screenEdgeLock``
+-  ``nfcRefDist``
 
-DirectSpeakers:
+Cartesian rendering requires the allocentric loudspeaker positions defined
+for the ITU-R BS.2051 layouts; for other layouts only polar rendering is
+available.
 
--  Cartesian positions
--  ``screenEdgeLock``
-
-All types:
-
--  ``M-SC`` and ``M+SC`` loudspeakers with azimuths wider than 25 degrees
-
-*libear* aims to be a complete renderer implementation; these deficiencies will
-be addressed in future releases.
-
-The Objects gain calculator is checked against gains produced by the reference
-implementation (the `EBU ADM Renderer <https://github.com/ebu/ebu_adm_renderer>`_)
-over a large set of layouts and block formats; see
-``tools/reference/generate_objects_reference.py`` and
-``tests/objects_reference_tests.cpp``.
+The Objects and DirectSpeakers gain calculators are checked against gains
+produced by the reference implementation (the `EBU ADM Renderer
+<https://github.com/ebu/ebu_adm_renderer>`_) over a large set of layouts and
+block formats; see ``tools/reference/`` and
+``tests/objects_reference_tests.cpp`` / ``tests/direct_speakers_reference_tests.cpp``.
 
 *libear* does not include functionality to read BW64 files or parse ADM XML
 data; for that functionality we recommend using libbw64_ and libadm_.

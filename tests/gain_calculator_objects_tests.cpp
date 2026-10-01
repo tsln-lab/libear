@@ -294,27 +294,99 @@ TEST_CASE("divergence") {
   }
 }
 
-TEST_CASE("not implemented") {
-  auto layout = getLayout("4+7+0").withoutLfe();
+// zone exclusion and Cartesian tests ported from the reference implementation
+// (ear/core/objectbased/test/test_gain_calc.py)
+
+TEST_CASE("zone_exclusion") {
+  auto layout = getLayout("4+5+0").withoutLfe();
   GainCalculatorObjectsTester gainCalc(layout);
 
-  auto otm = otmWithPos(PolarPosition{0.0, 0.0, 1.0});
-
-  SECTION("cartesian") {
-    otm.cartesian = true;
-    REQUIRE_THROWS_AS(gainCalc.run(otm), not_implemented);
-  }
-  SECTION("Cartesian position") {
-    otm.position = CartesianPosition(0.0, 0.0, 0.0);
-    REQUIRE_THROWS_AS(gainCalc.run(otm), not_implemented);
-  }
-  SECTION("zone") {
+  SECTION("front") {
+    auto otm = otmWithPos(PolarPosition{0.0, 0.0, 1.0});
     otm.zoneExclusion.zones.push_back(
         PolarExclusionZone{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ""});
-    REQUIRE_THROWS_AS(gainCalc.run(otm), not_implemented);
+    auto gainMap = gainCalc.run(otm);
+    REQUIRE(gainMap.direct.size() == 2);
+    REQUIRE(gainMap.direct.at("M+030") == Approx(std::sqrt(0.5)));
+    REQUIRE(gainMap.direct.at("M-030") == Approx(std::sqrt(0.5)));
   }
-  SECTION("screenRef") {
-    otm.screenRef = true;
-    REQUIRE_THROWS_AS(gainCalc.run(otm), not_implemented);
+  SECTION("mid_front") {
+    auto otm = otmWithPos(PolarPosition{0.0, 0.0, 1.0});
+    otm.zoneExclusion.zones.push_back(
+        PolarExclusionZone{-180.0, 180.0, 0.0, 0.0, 0.0, 0.0, ""});
+    auto gainMap = gainCalc.run(otm);
+    REQUIRE(gainMap.direct.size() == 2);
+    REQUIRE(gainMap.direct.at("U+030") == Approx(std::sqrt(0.5)));
+    REQUIRE(gainMap.direct.at("U-030") == Approx(std::sqrt(0.5)));
+  }
+}
+
+TEST_CASE("cartesian") {
+  auto layout = getLayout("4+5+0").withoutLfe();
+  GainCalculatorObjectsTester gainCalc(layout);
+
+  SECTION("channel_lock_on_speaker_cart") {
+    auto otm = otmWithPos(CartesianPosition{1.0, 1.0, 0.0});
+    otm.cartesian = true;
+    otm.channelLock = ChannelLock(true, 0.01);
+    auto gainMap = gainCalc.run(otm);
+    REQUIRE(gainMap.direct.size() == 1);
+    REQUIRE(gainMap.direct.at("M-030") == Approx(1.0));
+  }
+  SECTION("channel_lock_not_close_enough_cart") {
+    auto otm = otmWithPos(CartesianPosition{0.5, 1.0, 0.0});
+    otm.cartesian = true;
+    otm.channelLock = ChannelLock(true, 0.01);
+    auto gainMap = gainCalc.run(otm);
+    REQUIRE(gainMap.direct.size() == 2);
+    REQUIRE(gainMap.direct.at("M-030") == Approx(std::sqrt(0.5)));
+    REQUIRE(gainMap.direct.at("M+000") == Approx(std::sqrt(0.5)));
+  }
+  SECTION("channel_lock_no_max_enough_cart") {
+    auto otm = otmWithPos(CartesianPosition{0.6, 1.0, 0.0});
+    otm.cartesian = true;
+    otm.channelLock = ChannelLock(true);
+    auto gainMap = gainCalc.run(otm);
+    REQUIRE(gainMap.direct.size() == 1);
+    REQUIRE(gainMap.direct.at("M-030") == Approx(1.0));
+  }
+  SECTION("channel_lock_no_max_exclude") {
+    auto otm = otmWithPos(CartesianPosition{0.1, 1.0, 0.0});
+    otm.cartesian = true;
+    otm.channelLock = ChannelLock(true);
+    otm.zoneExclusion.zones.push_back(
+        PolarExclusionZone{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, ""});
+    auto gainMap = gainCalc.run(otm);
+    REQUIRE(gainMap.direct.size() == 1);
+    REQUIRE(gainMap.direct.at("M-030") == Approx(1.0));
+  }
+  SECTION("channel_lock_centre_cart") {
+    GainCalculatorObjectsTester gainCalc22(getLayout("9+10+3").withoutLfe());
+    auto otm = otmWithPos(CartesianPosition{0.0, 0.0, 0.0});
+    otm.cartesian = true;
+    otm.channelLock = ChannelLock(true);
+    auto gainMap = gainCalc22.run(otm);
+    REQUIRE(gainMap.direct.size() == 1);
+    REQUIRE(gainMap.direct.at("M-090") == Approx(1.0));
+  }
+  SECTION("diverge_cart") {
+    auto otm = otmWithPos(PolarPosition{0.0, 0.0, 1.0});
+    otm.cartesian = true;
+    otm.objectDivergence = CartesianObjectDivergence(0.5, 1.0);
+    auto gainMap = gainCalc.run(otm);
+    REQUIRE(gainMap.direct.size() == 3);
+    REQUIRE(gainMap.direct.at("M+000") == Approx(std::sqrt(1.0 / 3.0)));
+    REQUIRE(gainMap.direct.at("M+030") == Approx(std::sqrt(1.0 / 3.0)));
+    REQUIRE(gainMap.direct.at("M-030") == Approx(std::sqrt(1.0 / 3.0)));
+  }
+  SECTION("custom layout without allocentric positions") {
+    Layout custom = layout;
+    custom.name("custom");
+    GainCalculatorObjectsTester gainCalcCustom(custom);
+    auto otm = otmWithPos(CartesianPosition{0.0, 1.0, 0.0});
+    otm.cartesian = true;
+    REQUIRE_THROWS_AS(gainCalcCustom.run(otm), invalid_argument);
+    // polar rendering still works
+    REQUIRE(gainCalcCustom.run(otmWithPos(PolarPosition{0.0, 0.0, 1.0})).direct.at("M+000") == Approx(1.0));
   }
 }

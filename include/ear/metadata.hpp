@@ -142,6 +142,8 @@ namespace ear {
     /// screen specification from the `audioProgrammeReferenceScreen` element
     /// of the `audioProgramme` being rendered
     Screen referenceScreen = getDefaultScreen();
+    /// `screenEdgeLock` attributes on the `position` elements
+    ScreenEdgeLock screenEdgeLock = {};
   };
 
   // typeDefinition==HOA

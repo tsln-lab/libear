@@ -27,9 +27,11 @@ from ear import __name__ as _ear_name  # noqa: E402
 from ear.core import bs2051  # noqa: E402
 from ear.core.metadata_input import ObjectTypeMetadata  # noqa: E402
 from ear.core.objectbased.gain_calc import GainCalc  # noqa: E402
+from ear.core.geom import PolarPosition  # noqa: E402
 from ear.fileio.adm.elements import (  # noqa: E402
     AudioBlockFormatObjects, CartesianZone, ChannelLock, ObjectCartesianPosition,
-    ObjectDivergence, ObjectPolarPosition, PolarZone)
+    ObjectDivergence, ObjectPolarPosition, PolarZone, ScreenEdgeLock)
+from attr import evolve  # noqa: E402
 
 try:
     from importlib.metadata import version
@@ -43,6 +45,26 @@ CHANNEL_LOCK = 2
 DIVERGENCE = 4
 ZONE_EXCLUSION = 8
 SCREEN_REF = 16
+SCREEN_EDGE_LOCK = 32
+WIDE_SCREEN_SPEAKERS = 64
+
+
+def layout_for_spec(spec):
+    """A BS.2051 layout by name; "<name>:SC=<az>" moves the M+SC/M-SC
+    loudspeakers of the layout to +-az degrees."""
+    if ":SC=" in spec:
+        name, az = spec.split(":SC=")
+        az = float(az)
+        layout = bs2051.get_layout(name)
+        channels = []
+        for channel in layout.channels:
+            if channel.name == "M+SC":
+                channel = evolve(channel, polar_position=PolarPosition(az, 0.0, 1.0))
+            elif channel.name == "M-SC":
+                channel = evolve(channel, polar_position=PolarPosition(-az, 0.0, 1.0))
+            channels.append(channel)
+        return evolve(layout, channels=channels)
+    return bs2051.get_layout(spec)
 
 OUT = os.path.join(os.path.dirname(__file__), "..", "..", "tests", "reference", "objects_reference_data.cpp")
 
@@ -52,7 +74,7 @@ class Case(object):
                  width=0.0, height=0.0, depth=0.0, gain=1.0, diffuse=0.0,
                  channelLock=False, channelLockMaxDistance=None,
                  divergence=0.0, divergenceRange=None, divergenceCartesian=False,
-                 zones=(), screenRef=False):
+                 zones=(), screenRef=False, screenEdgeLockH=None, screenEdgeLockV=None):
         self.name = name
         self.layout = layout
         self.cartesian = cartesian
@@ -66,6 +88,8 @@ class Case(object):
         self.divergenceCartesian = divergenceCartesian
         self.zones = list(zones)
         self.screenRef = screenRef
+        self.screenEdgeLockH = screenEdgeLockH
+        self.screenEdgeLockV = screenEdgeLockV
 
     @property
     def features(self):
@@ -80,6 +104,10 @@ class Case(object):
             f |= ZONE_EXCLUSION
         if self.screenRef:
             f |= SCREEN_REF
+        if self.screenEdgeLockH is not None or self.screenEdgeLockV is not None:
+            f |= SCREEN_EDGE_LOCK
+        if ":SC=" in self.layout:
+            f |= WIDE_SCREEN_SPEAKERS
         return f
 
     @property
@@ -87,10 +115,11 @@ class Case(object):
         return self.width != 0.0 or self.height != 0.0 or self.depth != 0.0
 
     def block_format(self):
+        screen_edge_lock = ScreenEdgeLock(horizontal=self.screenEdgeLockH, vertical=self.screenEdgeLockV)
         if self.cartesian:
-            position = ObjectCartesianPosition(*self.position)
+            position = ObjectCartesianPosition(*self.position, screenEdgeLock=screen_edge_lock)
         else:
-            position = ObjectPolarPosition(*self.position)
+            position = ObjectPolarPosition(*self.position, screenEdgeLock=screen_edge_lock)
 
         kwargs = dict(position=position, cartesian=self.cartesian,
                       width=self.width, height=self.height, depth=self.depth,
@@ -226,6 +255,34 @@ def build_cases():
         for x, y, z in [(0.0, 1.0, 0.0), (0.5, 1.0, 0.2), (-0.3, 0.9, 0.0)]:
             cases.append(Case("screenref_cartesian", layout, cartesian=True, position=(x, y, z), screenRef=True))
 
+    # --- screen edge lock (default layout screen)
+    locks = [("left", None), ("right", None), (None, "top"), (None, "bottom"),
+             ("left", "top"), ("right", "bottom")]
+    for layout in ["0+5+0", "4+5+0", "9+10+3"]:
+        for (h, v), (az, el) in product(locks, [(0.0, 0.0), (45.0, 20.0), (-120.0, 0.0)]):
+            cases.append(Case("screenedgelock", layout, position=(az, el, 1.0),
+                              screenEdgeLockH=h, screenEdgeLockV=v))
+        for (h, v) in locks:
+            cases.append(Case("screenedgelock_cartesian", layout, cartesian=True, position=(0.3, 0.8, 0.1),
+                              screenEdgeLockH=h, screenEdgeLockV=v))
+        cases.append(Case("screenedgelock_extent", layout, position=(10.0, 5.0, 1.0),
+                          screenEdgeLockH="left", width=30.0, height=20.0))
+        cases.append(Case("screenedgelock_screenref", layout, position=(10.0, 5.0, 1.0),
+                          screenEdgeLockV="top", screenRef=True))
+
+    # --- layouts with screen loudspeakers (4+9+0 has M+SC and M-SC at +-15
+    # by default); wider than 30 degrees changes their nominal positions
+    for layout in ["4+9+0", "4+9+0:SC=20", "4+9+0:SC=40", "4+9+0:SC=55"]:
+        for az, el in product([-60.0, -45.0, -40.0, -20.0, -15.0, -10.0, 0.0, 10.0, 15.0, 20.0, 40.0, 45.0, 60.0, 110.0],
+                              [0.0, 15.0, 30.0]):
+            cases.append(Case("screenspeakers", layout, position=(az, el, 1.0)))
+        cases.append(Case("screenspeakers_extent", layout, position=(20.0, 0.0, 1.0), width=45.0))
+        cases.append(Case("screenspeakers_channellock", layout, position=(18.0, 0.0, 1.0), channelLock=True))
+        for x in [-1.0, -0.5, -0.4, 0.0, 0.4, 0.5, 1.0]:
+            cases.append(Case("screenspeakers_cartesian", layout, cartesian=True, position=(x, 1.0, 0.0)))
+        cases.append(Case("screenspeakers_zone", layout, position=(0.0, 0.0, 1.0),
+                          zones=[("polar", 0.0, 0.0, 0.0, 0.0)]))
+
     return cases
 
 
@@ -236,28 +293,26 @@ def fmt(x):
 def main():
     cases = build_cases()
     calcs = {}
-    lines = []
-    lines.append("// GENERATED by tools/reference/generate_objects_reference.py -- do not edit")
-    lines.append("// reference implementation: ear %s (https://github.com/ebu/ebu_adm_renderer)" % EAR_VERSION)
-    lines.append('#include "objects_reference.hpp"')
-    lines.append("")
-    lines.append("namespace ear {")
-    lines.append("  namespace reference {")
-    lines.append("")
-    lines.append("    const std::vector<ObjectsCase>& objectsCases() {")
-    lines.append("      static const std::vector<ObjectsCase> cases = {")
 
+    zones_rows = []
+    gains_values = []
+    case_rows = []
     for case in cases:
         if case.layout not in calcs:
-            calcs[case.layout] = GainCalc(bs2051.get_layout(case.layout))
+            calcs[case.layout] = GainCalc(layout_for_spec(case.layout))
         gains = calcs[case.layout].render(ObjectTypeMetadata(block_format=case.block_format()))
 
-        zones = ", ".join(
-            "{%s, %s}" % ("true" if z[0] == "cartesian" else "false",
-                          ", ".join(fmt(v) for v in (list(z[1:]) + [0.0, 0.0])[:6]))
-            for z in case.zones)
+        zones_offset = len(zones_rows)
+        for z in case.zones:
+            values = (list(z[1:]) + [0.0, 0.0])[:6]
+            zones_rows.append("{%s, {%s}}" % ("true" if z[0] == "cartesian" else "false",
+                                              ", ".join(fmt(v) for v in values)))
 
-        lines.append("        {\"%s\", \"%s\", %du, %s, {%s}, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, {%s}, %s, %s," % (
+        gains_offset = len(gains_values)
+        gains_values.extend(float(v) for v in gains.direct)
+        gains_values.extend(float(v) for v in gains.diffuse)
+
+        case_rows.append("{\"%s\", \"%s\", %du, %s, {%s}, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %d, %d, %s, \"%s\", \"%s\", %s, %d, %d}" % (
             case.name, case.layout, case.features,
             "true" if case.cartesian else "false",
             ", ".join(fmt(v) for v in case.position),
@@ -267,13 +322,70 @@ def main():
             fmt(case.divergence),
             fmt(case.divergenceRange if case.divergenceRange is not None else -1.0),
             "true" if case.divergenceCartesian else "false",
-            zones,
+            zones_offset, len(case.zones),
             "true" if case.screenRef else "false",
-            "true" if case.uses_extent else "false"))
-        lines.append("         {%s}," % ", ".join(fmt(v) for v in gains.direct))
-        lines.append("         {%s}}," % ", ".join(fmt(v) for v in gains.diffuse))
+            case.screenEdgeLockH or "", case.screenEdgeLockV or "",
+            "true" if case.uses_extent else "false",
+            gains_offset, len(gains.direct)))
 
+    lines = []
+    lines.append("// GENERATED by tools/reference/generate_objects_reference.py -- do not edit")
+    lines.append("// reference implementation: ear %s (https://github.com/ebu/ebu_adm_renderer)" % EAR_VERSION)
+    lines.append("//")
+    lines.append("// The data is stored in plain arrays and converted at runtime, as large")
+    lines.append("// braced-init-lists of non-trivial types compile extremely slowly.")
+    lines.append('#include "objects_reference.hpp"')
+    lines.append("")
+    lines.append("namespace ear {")
+    lines.append("  namespace reference {")
+    lines.append("    namespace {")
+    lines.append("      struct RawCase {")
+    lines.append("        const char* name; const char* layout; unsigned features; bool cartesian;")
+    lines.append("        double position[3]; double width; double height; double depth; double gain; double diffuse;")
+    lines.append("        bool channelLock; double channelLockMaxDistance; double divergence; double divergenceRange;")
+    lines.append("        bool divergenceCartesian; int zonesOffset; int zonesCount; bool screenRef;")
+    lines.append("        const char* screenEdgeLockH; const char* screenEdgeLockV; bool usesExtent;")
+    lines.append("        int gainsOffset; int numChannels;")
     lines.append("      };")
+    lines.append("")
+    lines.append("      const Zone k_zones[] = {")
+    for row in zones_rows:
+        lines.append("        %s," % row)
+    lines.append("        {false, {0.0, 0.0, 0.0, 0.0, 0.0, 0.0}},  // sentinel")
+    lines.append("      };")
+    lines.append("")
+    lines.append("      const double k_gains[] = {")
+    for i in range(0, len(gains_values), 8):
+        lines.append("        %s," % ", ".join(fmt(v) for v in gains_values[i:i + 8]))
+    lines.append("      };")
+    lines.append("")
+    lines.append("      const RawCase k_cases[] = {")
+    for row in case_rows:
+        lines.append("        %s," % row)
+    lines.append("      };")
+    lines.append("    }  // namespace")
+    lines.append("")
+    lines.append("    const std::vector<ObjectsCase>& objectsCases() {")
+    lines.append("      static const std::vector<ObjectsCase> cases = [] {")
+    lines.append("        std::vector<ObjectsCase> ret;")
+    lines.append("        for (const RawCase& r : k_cases) {")
+    lines.append("          ObjectsCase c;")
+    lines.append("          c.name = r.name; c.layout = r.layout; c.features = r.features; c.cartesian = r.cartesian;")
+    lines.append("          for (int i = 0; i < 3; i++) c.position[i] = r.position[i];")
+    lines.append("          c.width = r.width; c.height = r.height; c.depth = r.depth; c.gain = r.gain; c.diffuse = r.diffuse;")
+    lines.append("          c.channelLock = r.channelLock; c.channelLockMaxDistance = r.channelLockMaxDistance;")
+    lines.append("          c.divergence = r.divergence; c.divergenceRange = r.divergenceRange;")
+    lines.append("          c.divergenceCartesian = r.divergenceCartesian;")
+    lines.append("          c.zones.assign(k_zones + r.zonesOffset, k_zones + r.zonesOffset + r.zonesCount);")
+    lines.append("          c.screenRef = r.screenRef;")
+    lines.append("          c.screenEdgeLockHorizontal = r.screenEdgeLockH; c.screenEdgeLockVertical = r.screenEdgeLockV;")
+    lines.append("          c.usesExtent = r.usesExtent;")
+    lines.append("          c.direct.assign(k_gains + r.gainsOffset, k_gains + r.gainsOffset + r.numChannels);")
+    lines.append("          c.diffuseGains.assign(k_gains + r.gainsOffset + r.numChannels, k_gains + r.gainsOffset + 2 * r.numChannels);")
+    lines.append("          ret.push_back(std::move(c));")
+    lines.append("        }")
+    lines.append("        return ret;")
+    lines.append("      }();")
     lines.append("      return cases;")
     lines.append("    }")
     lines.append("")
